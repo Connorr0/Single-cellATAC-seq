@@ -1,0 +1,254 @@
+---
+title: "ATAC integration"
+author: "Connor Finkbeiner"
+date: "4/24/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(Signac)
+library(Seurat)
+library(GenomeInfoDb)
+library(EnsDb.Mmusculus.v79)
+library(dplyr)
+
+library(DropletUtils)
+```
+
+# loading the datasets
+```{r}
+E14 = readRDS("Z:/People Folders/Marcus/sc_atac_seq/E14")
+E18 = readRDS("Z:/People Folders/Marcus/sc_atac_seq/E18")
+P0 = readRDS("Z:/People Folders/Marcus/sc_atac_seq/P0_retina_seurat_updated")
+
+DimPlot(E14)
+DimPlot(E18)
+DimPlot(P0)
+```
+
+#updating E18
+```{r}
+E18 <- RunTFIDF(E18)
+E18 <- FindTopFeatures(E18, min.cutoff = 'q0')
+
+E18 <- RunSVD(
+  object = E18,
+  assay = 'peaks',
+  reduction.key = 'LSI_',
+  reduction.name = 'lsi', 
+  n = 100
+)
+
+E18 <- RunUMAP(
+  object = E18,
+  reduction = 'lsi',
+  dims = 1:70
+)
+E18 <- FindNeighbors(
+  object = E18,
+  reduction = 'lsi',
+  dims = 1:30
+)
+E18 <- FindClusters(
+  object = E18,
+  algorithm = 3,
+  resolution = 1.2,
+  verbose = FALSE
+)
+
+DimPlot(E18)
+```
+
+#Set P0 fragments
+```{r}
+fragment.path <- 'Z:/Genomics/scATAC-seq/scATAC_1_1_2020/P0_retina/outs/filtered_fragments.tsv.gz'
+
+P0 <- SetFragments(
+  object = P0,
+  file = fragment.path
+)
+```
+
+
+```{r}
+# integration_peaks = read.table("Z:/Genomics/scATAC-seq/Marcus and Connor/Objects/P0_E14_E18_peaks.bed", header = F)
+
+integration_peaks = read.table("C:/Users/reh_l/Downloads/P0_merge_E14.bed", header = F)
+
+
+integration_peaks = paste0(integration_peaks$V1,":", integration_peaks$V2, "-", integration_peaks$V3)
+```
+
+```{r}
+#create matricies
+integration_peaks_E14 <- FeatureMatrix(
+  fragments = GetFragments(object = E14, assay = 'peaks'),
+  features = StringToGRanges(integration_peaks, sep = c(":", "-")),
+  cells = colnames(E14))
+
+
+integration_peaks_P0 <- FeatureMatrix(
+  fragments = GetFragments(object = P0, assay = 'peaks'),
+  features = StringToGRanges(integration_peaks, sep = c(":", "-")),
+  cells = colnames(P0))
+
+#downsampling
+
+E14_P0_frac = sum(integration_peaks_E14)/sum(integration_peaks_P0)
+integration_peaks_P0_e14 <- downsampleMatrix(integration_peaks_P0, prop=E14_P0_frac)
+
+# check number of peaks similar
+sum(integration_peaks_P0_e14)/sum(integration_peaks_E14)
+
+
+#assay assignment
+E14[['sharedPeaks_E14_P0']] <- CreateAssayObject(counts = integration_peaks_E14, min.cells = 1)
+E14 <- RunTFIDF(object = E14, assay = 'sharedPeaks_E14_P0')
+
+P0[['sharedPeaks_E14_P0']] <- CreateAssayObject(counts = integration_peaks_P0_e14, min.cells = 1)
+P0 <- RunTFIDF(object = P0, assay = 'sharedPeaks_E14_P0')
+
+#visuals
+hist(E14$nCount_sharedPeaks)
+hist(P0$nCount_sharedPeaks)
+```
+
+```{r}
+unintegrated <- MergeWithRegions(
+  object.1 = E14,
+  object.2 = P0,
+  assay.1 = 'sharedPeaks_E14_P0',
+  assay.2 = 'sharedPeaks_E14_P0',
+  sep.1 = c("-", "-"),
+  sep.2 = c("-", "-")
+)
+dim(E14@assays$sharedPeaks_E14_P0@counts)[1]
+dim(P0@assays$sharedPeaks_E14_P0@counts)[1]
+
+unintegrated <- RunTFIDF(object = unintegrated, assay = 'peaks')
+unintegrated <- FindTopFeatures(unintegrated, min.cutoff = 50)
+unintegrated <- RunSVD(unintegrated, n = 30, reduction.name = 'lsi', reduction.key = 'LSI_')
+unintegrated <- RunUMAP(unintegrated, reduction = 'lsi', dims = 1:30)
+
+
+DimPlot(unintegrated, group.by = 'orig.ident', pt.size = 0.1) + ggplot2::ggtitle("Unintegrated E14 P0")
+
+
+DimPlot(unintegrated, group.by = 'Cell_type', pt.size = 0.1) + ggplot2::ggtitle("Unintegrated E14 P0")
+```
+
+
+
+```{r}
+
+for (i in (2*(1:15)))(
+  print(DimPlot(unintegrated, 
+                group.by = 'orig.ident', 
+                pt.size = 0.1, reduction = "lsi", dims = (i-1):i))
+)
+
+unintegrated2 <- RunUMAP(unintegrated, reduction = 'lsi', dims = c(1:2, 5:30))
+
+DimPlot(unintegrated2, 
+                group.by = 'orig.ident', 
+                pt.size = 0.1)
+
+DimPlot(unintegrated2, 
+                group.by = 'Cell_type', 
+                pt.size = 0.1)
+```
+
+```{r}
+E14_peaks = rowSums(E14@assays$sharedPeaks_E14_P0@data > 0)
+E14_peaks = names(E14_peaks[E14_peaks > 10])
+#E14_peaks = names(E14_peaks)
+
+P0_peaks = rowSums(P0@assays$sharedPeaks_E14_P0@data > 0)
+P0_peaks = names(P0_peaks[P0_peaks > 10])
+#P0_peaks = names(P0_peaks)
+
+common_peaks = intersect(E14_peaks, P0_peaks)
+length(common_peaks)
+# 10,000 isto few to keep structure
+# all peaks overloaded my memory
+availible_peaks = unique(c(E14_peaks, P0_peaks))
+length(availible_peaks)
+
+
+
+peaks.use = sample(common_peaks, 10000, replace = FALSE)
+
+
+DefaultAssay(E14) <- "sharedPeaks_E14_P0"
+E14 = FindVariableFeatures(E14, nfeatures = 50000)
+DefaultAssay(P0) <- "sharedPeaks_E14_P0"
+P0 = FindVariableFeatures(P0, nfeatures = 50000)
+
+print(paste("Out of the top", "50,000", "variable features for E14 and P0", length(intersect(VariableFeatures(E14), VariableFeatures(P0))), "are shared"))
+
+print(paste("Out of the top", "30,000", "variable features for E14 and P0", length(intersect(head(VariableFeatures(E14), 30000), head(VariableFeatures(P0), 30000))), "are shared"))
+
+print(paste("Out of the top", "20,000", "variable features for E14 and P0", length(intersect(head(VariableFeatures(E14), 20000), head(VariableFeatures(P0), 20000))), "are shared"))
+
+print(paste("Out of the top", "10,000", "variable features for E14 and P0", length(intersect(head(VariableFeatures(E14), 10000), head(VariableFeatures(P0), 10000))), "are shared"))
+
+var.peaks.use = unique(c(head(VariableFeatures(E14), 30000), 
+                         head(VariableFeatures(P0), 30000)))
+
+length(var.peaks.use)
+```
+
+```{r}
+anchors <- FindIntegrationAnchors(
+  object.list = list(E14, P0),
+  assay = c('sharedPeaks_E14_P0', 'sharedPeaks_E14_P0'),
+  k.filter = NA, 
+  anchor.features = var.peaks.use
+)
+
+integrated <- IntegrateData(
+  anchorset = anchors,
+  preserve.order = TRUE, 
+  features.to.integrate = availible_peaks
+)
+
+integrated <- RunSVD(
+  object = integrated,
+  n = 30,
+  reduction.name = 'integratedLSI'
+)
+
+integrated <- RunUMAP(
+  object = integrated,
+  dims = 1:30,
+  reduction = 'integratedLSI'
+)
+
+# unique(integrated$Cell_type)
+integrated$Cell_type_stable = recode(integrated$Cell_type,
+                                     "Differentiating" = "T0",
+                                     "Differentiating_Otx2_high" = "T0",
+                                     "Photoreceptor_transition" = "T3", 
+                                     "GC_transition" = "T1",
+                                     "Amacrine_2" = "Amacrine",
+                                     "Amacrine_transition" = "T2")
+
+DimPlot(integrated, group.by = 'orig.ident', pt.size = 0.1) + ggplot2::ggtitle("Integrated")
+DimPlot(integrated, group.by = 'Cell_type_stable', pt.size = 0.1, label = T) + ggplot2::ggtitle("Integrated")
+```
+
+```{r}
+saveRDS(E14, "Z:/Genomics/scATAC-seq/Marcus and Connor/mouse integration/E14_integration_peaks")
+E14 = readRDS("Z:/Genomics/scATAC-seq/Marcus and Connor/mouse integration/E14_integration_peaks")
+
+
+saveRDS(P0, "Z:/Genomics/scATAC-seq/Marcus and Connor/mouse integration/P0_retina_seurat_updated_integration_peaks")
+P0 = readRDS("Z:/Genomics/scATAC-seq/Marcus and Connor/mouse integration/P0_retina_seurat_updated_integration_peaks")
+
+saveRDS(integrated, "Z:/Genomics/scATAC-seq/Marcus and Connor/mouse integration/P0_E14_integrated")
+```
+
