@@ -1,0 +1,255 @@
+---
+title: "Untitled"
+author: "Connor Finkbeiner"
+date: "6/3/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+Mac = F
+if (Mac == T){
+  pre = "/Volumes/lab"
+}else{
+  pre = "Z:"
+}
+```
+
+```{r}
+library(Signac)
+library(Seurat)
+library(GenomeInfoDb)
+library(EnsDb.Mmusculus.v79)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(TFBSTools)
+library(cowplot)
+library(stringr)
+library(pheatmap)
+library(tidyr)
+library(gridExtra)
+library(grid)
+library(ggplot2)
+library(lattice)
+
+# 
+# MotifPlot(
+#   object = mouse_brain,
+#   motifs = head(rownames(enriched.motifs))
+# )
+
+source(paste0(pre,"/People Folders/Marcus/sc_atac_seq/Functions/BetterCoveragePlot.R"))
+source(paste0(pre,"/People Folders/Connor/R_Functions/bed_from_peaks.R"))
+source(paste0(pre,"/Genomics/scATAC-seq/Marcus and Connor/Peak_mapping/Create_peak_gene_df.R"))
+source(paste0(pre,"/People Folders/Connor/R_Functions/Tf_peak_heatmap.R"))
+source(paste0(pre,"/People Folders/Connor/R_Functions/top_peaks_funs.R"))
+set.seed(1234)
+```
+
+```{r}
+#load E14
+E14_macs2 <- readRDS(paste0(pre, "/Genomics/scATAC-seq/Marcus and Connor/mouse integration/Macs2/E14_integration_peaks"))
+
+#plots
+DimPlot(E14_macs2)
+FeaturePlot(E14_macs2, "pseudotime")
+
+#make averages
+DefaultAssay(E14_macs2) <- "peaks"
+E14_avg = AverageExpression(E14_macs2)$peaks
+
+E14_macs2 <- RunChromVAR(
+  object = E14_macs2,
+  genome = BSgenome.Mmusculus.UCSC.mm10
+)
+
+DefaultAssay(E14_macs2) <- 'chromvar'
+
+# download peak gene assocations
+E14_n2_dict = Create_peak_gene_map("Z:/Genomics/scATAC-seq/Marcus and Connor/Objects/using macs2 called peaks/E14/E14_Macs2_dict.bed")
+```
+
+```{r}
+# download motif similarity matrix for Jaspar 2020 motifs
+Sim_mtx = readRDS(paste0(pre, "/Genomics/scATAC-seq/Marcus and Connor/connor_motif_search/Sim_mtx.RDS"))
+pheatmap(Sim_mtx, show_rownames = F, show_colnames = F)
+```
+
+```{r}
+Pro_t0 = top_20pct(E14_avg, "Progenitors", "T1_early", v = T, path = "Z:/Genomics/scATAC-seq/Marcus and Connor/top_pct_bed_and_plots/E14_top20pct/", plot = T, save_plot = T)
+```
+
+```{r}
+Pro_t0_res = tf_peak_heatmap(E14_macs2,
+                peaks = rownames(Pro_t0$df),
+                nmap = 30)
+
+cluster_bed(mtx = Pro_t0_res$mtx,
+            clusters_df = Pro_t0_res$clusters,
+            res = "k_10",
+            TF = "Sox3", 
+            path = "Pro_t0_", 
+            sim = Sim_mtx, 
+            chromvar = T, 
+            Signac_obj = E14_macs2)
+
+
+cluster_bed(mtx = Pro_t0_res$mtx,
+            clusters_df = Pro_t0_res$clusters,
+            res = "k_10",
+            TF = "SOX13", 
+            path = "Pro_t0_", 
+            sim = Sim_mtx, 
+            chromvar = T, 
+            Signac_obj = E14_macs2)
+
+cluster_bed(mtx = Pro_t0_res$mtx,
+            clusters_df = Pro_t0_res$clusters,
+            res = "k_10",
+            TF = "Zic1::Zic2", 
+            path = "Pro_t0_", 
+            sim = Sim_mtx, 
+            chromvar = T, 
+            Signac_obj = E14_macs2)
+
+```
+
+```{r}
+make_bed_from_peaks(rownames(Pro_t0_res$mtx)[Pro_t0_res$mtx[,"Arid3a"] >0], path = "Pro_t0_Arid3a.bed")
+make_bed_from_peaks(rownames(Pro_t0_res$mtx)[Pro_t0_res$mtx[,"IKZF1"] >0], path = "Pro_t0_IKZF1.bed")
+```
+
+
+
+```{r}
+Pro_t0_60_80 = top_20pct(E14_avg, "Progenitors", "T1_early", v = T, path = "Z:/Genomics/scATAC-seq/Marcus and Connor/top_pct_bed_and_plots/E14_top20pct/", plot = T, save_plot = T, pct_top = .6, pct_top_cutoff = .8)
+
+t0_Pro_60_80 = top_20pct(E14_avg,  "T1_early", "Progenitors", v = T, path = "Z:/Genomics/scATAC-seq/Marcus and Connor/top_pct_bed_and_plots/E14_top20pct/", plot = T, save_plot = T, pct_top = .6, pct_top_cutoff = .8)
+```
+
+```{r}
+t0_Pro_60_80_res = tf_peak_heatmap(E14_macs2,
+                peaks = rownames(t0_Pro_60_80$df),
+                nmap = 30)
+
+rownames(t0_Pro_60_80_res$clusters)
+```
+
+```{r}
+onecut_peaks =  cluster_bed(mtx = t0_Pro_60_80_res$mtx,
+            clusters_df = t0_Pro_60_80_res$clusters,
+            res = "k_10",
+            TF = "ONECUT1", 
+            path = "t0_Pro_60_80_", 
+            sim = Sim_mtx, 
+            chromvar = T, 
+            Signac_obj = E14_macs2)
+
+
+length(onecut_peaks)
+
+E14_macs2$view_multi_peaks = colSums(E14_macs2@assays$peaks[names(onecut_peaks),])
+
+FeaturePlot(E14_macs2, features = "view_multi_peaks", max.cutoff = "q90")
+FeaturePlot(E14_macs2, features = "view_multi_peaks")
+
+E14_macs2@meta.data
+```
+
+```{r}
+t0_Pro = top_20pct(E14_avg,  "T1_early", "Progenitors", v = T, path = "Z:/Genomics/scATAC-seq/Marcus and Connor/top_pct_bed_and_plots/E14_top20pct/", plot = T, save_plot = T)
+
+t0_Pro_res = tf_peak_heatmap(E14_macs2,
+                peaks = rownames(t0_Pro$df),
+                nmap = 40)
+
+onecut_peaks2 =  cluster_bed(mtx = t0_Pro_res$mtx,
+            clusters_df = t0_Pro_res$clusters,
+            res = "k_10",
+            TF = "ONECUT1", 
+            path = "t0_Pro_", 
+            sim = Sim_mtx, 
+            chromvar = T, 
+            Signac_obj = E14_macs2)
+
+E14_macs2$view_multi_peaks2 = colSums(E14_macs2@assays$peaks[names(onecut_peaks2),])
+
+FeaturePlot(E14_macs2, features = "view_multi_peaks2", max.cutoff = "q90")
+FeaturePlot(E14_macs2, features = "view_multi_peaks2")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# make this a function later
+```{r}
+names(motif_Pro_t0[motif_Pro_t0 > 500])
+
+top_100 = do.call(c, strsplit(names(motif_Pro_t0[1:100]), "::"))
+top_100 = gsub("\\s*\\([^\\)]+\\)","",as.character(top_100))
+
+mgi_tfs2 = getLDS(attributes = c("hgnc_symbol"),
+                 filters = "hgnc_symbol", 
+                 values = top_100, 
+                 mart = human, 
+                 attributesL = c("mgi_symbol"), 
+                 martL = mouse, 
+                 uniqueRows=T)
+
+top_100[!((top_100 %in% mgi_tfs2$HGNC.symbol) | (top_100 %in% mgi_tfs2$MGI.symbol))]
+
+
+
+tf_peaks_T0 = E14_GREAT_dict[(E14_GREAT_dict$Gene %in% mgi_tfs2$MGI.symbol) & 
+                               (abs(E14_GREAT_dict$Distance) < 40000) &
+                               (E14_GREAT_dict$ATAC_peak %in% rownames(Pro_t0$df)),]
+
+
+
+
+
+motif_TF_mtx_T0 = data.frame(E14_macs2@assays$peaks@misc$motif@data[tf_peaks_T0$ATAC_peak, names(motif_Pro_t0[1:100])])
+# motif_TF_mtx_T0 = data.frame(motif.matrix_counts[tf_peaks_T0$ATAC_peak, names(motif_Pro_t0[motif_Pro_t0 > 500])])
+
+
+motif_TF_mtx_T0$ATAC_peak = sub('[.]', '-', sub('[.]', ':', rownames(motif_TF_mtx_T0)))
+
+
+
+motif_TF_mtx_T0 = merge(motif_TF_mtx_T0, tf_peaks_T0[c("ATAC_peak", "Gene")])
+
+TF_TF_matrix_T0 = motif_TF_mtx_T0[colnames(motif_TF_mtx_T0)[colnames(motif_TF_mtx_T0) != "ATAC_peak"]] %>% group_by(Gene) %>% summarise_all(sum) #rows are regulatees, columns are regulators
+
+
+TF_TF_matrix_T0 = data.frame(TF_TF_matrix_T0)
+rownames(TF_TF_matrix_T0) = TF_TF_matrix_T0$Gene
+TF_TF_matrix_T0$Gene = NULL
+
+
+
+TF_TF_matrix_T0
+
+pheatmap(as.matrix(TF_TF_matrix_T0))
+```
+
+
+
